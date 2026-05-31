@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import morgan from 'morgan';
 import dotenv from 'dotenv';
+import path from 'path';
 
 // Import Services
 import { dbService } from './services/db.js';
@@ -18,6 +19,9 @@ const PORT = process.env.PORT || 5000;
 app.use(cors());
 app.use(express.json());
 app.use(morgan('dev'));
+
+// Serve Static Frontend Assets
+app.use(express.static('public'));
 
 // --- API ROUTES ---
 
@@ -138,6 +142,38 @@ app.get('/api/telemetry', async (req, res) => {
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
+});
+
+// Admin-restricted routes
+app.get('/api/admin/projects', async (req, res) => {
+  try {
+    const { adminEmail } = req.query;
+    if (adminEmail !== 'thibault@tibodata.com') {
+      return res.status(403).json({ error: 'Access denied. Restricted to administrator.' });
+    }
+    const projects = await dbService.getAllProjects();
+    res.json(projects);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/admin/telemetry', async (req, res) => {
+  try {
+    const { adminEmail } = req.query;
+    if (adminEmail !== 'thibault@tibodata.com') {
+      return res.status(403).json({ error: 'Access denied. Restricted to administrator.' });
+    }
+    const telemetry = await telemetryService.getAllMetrics();
+    res.json(telemetry);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// 5. Wildcard SPA Routing (fallback to frontend index.html)
+app.get('*', (req, res) => {
+  res.sendFile(path.resolve('public', 'index.html'));
 });
 
 // Start Server

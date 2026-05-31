@@ -35,7 +35,7 @@ class TelemetryService {
       userId,
       projectId,
       timestamp: new Date().toLocaleTimeString(),
-      resource: 'Gemini 1.5 Flash (Tokens)',
+      resource: 'AI Design Tokens',
       qty: `${inputTokens.toLocaleString()} In / ${outputTokens.toLocaleString()} Out`,
       cost: totalCost
     };
@@ -102,9 +102,9 @@ class TelemetryService {
     // Fallback: If no logs are in the system yet, pre-populate standard demo seed logs
     if (logs.length === 0) {
       logs = [
-        { id: 1, timestamp: '14:02:11', resource: 'Gemini 1.5 Flash (Tokens)', qty: '12,430 In / 4,120 Out', cost: 0.0124 },
-        { id: 2, timestamp: '14:02:15', resource: 'Cloud Run Build (CPU-sec)', qty: '42.5 vCPU-sec', cost: 0.0034 },
-        { id: 3, timestamp: '14:05:00', resource: 'Cloud Run Compute (RAM-sec)', qty: '2,048 MB-sec', cost: 0.0016 },
+        { id: 1, timestamp: '14:02:11', resource: 'AI Design Tokens', qty: '12,430 In / 4,120 Out', cost: 0.0124 },
+        { id: 2, timestamp: '14:02:15', resource: 'Design Build (Cycles)', qty: '42.5 Cycles', cost: 0.0034 },
+        { id: 3, timestamp: '14:05:00', resource: 'Interactive Hosting (Active)', qty: '2,048 Seconds', cost: 0.0016 },
       ];
     }
 
@@ -116,6 +116,64 @@ class TelemetryService {
       aggregates: {
         totalTokens: 12430 + 24500, // mock combined aggregates
         totalCpuSec: 42.5,
+      }
+    };
+  }
+
+  async getAllMetrics() {
+    let logs = [];
+
+    if (dbService.useFirestore) {
+      try {
+        const snapshot = await dbService.firestore.collection('telemetry_logs')
+          .orderBy('createdAt', 'desc')
+          .get();
+        
+        snapshot.forEach((doc) => logs.push({ id: doc.id, ...doc.data() }));
+      } catch (err) {
+        console.error('Firestore getAllMetrics logs query failed, falling back to local:', err.message);
+        const db = dbService.readLocalDb();
+        logs = db.telemetry;
+      }
+    } else {
+      const db = dbService.readLocalDb();
+      logs = db.telemetry;
+    }
+
+    logs = logs.slice().reverse();
+
+    if (logs.length === 0) {
+      logs = [
+        { id: 1, timestamp: '14:02:11', resource: 'AI Design Tokens', qty: '12,430 In / 4,120 Out', cost: 0.0124, userId: 'thibault@tibodata.com' },
+        { id: 2, timestamp: '14:02:15', resource: 'Design Build (Cycles)', qty: '42.5 Cycles', cost: 0.0034, userId: 'thibault@tibodata.com' },
+        { id: 3, timestamp: '14:05:00', resource: 'Interactive Hosting (Active)', qty: '2,048 Seconds', cost: 0.0016, userId: 'admin@tibodata.com' },
+      ];
+    }
+
+    const totalCost = logs.reduce((acc, curr) => acc + curr.cost, 0);
+
+    return {
+      logs,
+      totalCost,
+      aggregates: {
+        totalTokens: logs.reduce((sum, log) => {
+          if (log.resource && log.resource.includes('Tokens')) {
+            const matches = log.qty.match(/([\d,]+)\s+In\s+\/\s+([\d,]+)\s+Out/i);
+            if (matches) {
+              const inTokens = parseInt(matches[1].replace(/,/g, ''), 10) || 0;
+              const outTokens = parseInt(matches[2].replace(/,/g, ''), 10) || 0;
+              return sum + inTokens + outTokens;
+            }
+          }
+          return sum;
+        }, 0) || 36930,
+        totalCpuSec: logs.reduce((sum, log) => {
+          if (log.resource && log.resource.includes('Build')) {
+            const val = parseFloat(log.qty) || 0;
+            return sum + val;
+          }
+          return sum;
+        }, 0) || 42.5
       }
     };
   }

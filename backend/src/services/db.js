@@ -8,7 +8,8 @@ import path from 'path';
 class DbService {
   constructor() {
     this.useFirestore = false;
-    this.localDbPath = path.resolve('/home/thibaultlefevre/.gemini/antigravity/scratch/zephyr/backend/local_db.json');
+    const isProduction = process.env.NODE_ENV === 'production';
+    this.localDbPath = process.env.LOCAL_DB_PATH || (isProduction ? path.resolve('/tmp', 'local_db.json') : path.resolve(process.cwd(), 'local_db.json'));
     this.initLocalDb();
 
     try {
@@ -125,6 +126,22 @@ class DbService {
 
     const db = this.readLocalDb();
     return db.projects.filter((p) => p.userId === userId);
+  }
+
+  async getAllProjects() {
+    if (this.useFirestore) {
+      try {
+        const snapshot = await this.firestore.collection('projects').get();
+        const list = [];
+        snapshot.forEach((doc) => list.push({ id: doc.id, ...doc.data() }));
+        return list;
+      } catch (error) {
+        console.error('Firestore getAllProjects failed, using local fallback:', error.message);
+      }
+    }
+
+    const db = this.readLocalDb();
+    return db.projects;
   }
 
   async createProject(userId, name) {

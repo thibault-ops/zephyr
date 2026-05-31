@@ -10,8 +10,9 @@ import { dbService } from './db.js';
 class DeployerService {
   constructor() {
     this.useGcpApis = false;
-    this.projectRoot = '/home/thibaultlefevre/.gemini/antigravity/scratch/zephyr';
-    this.gcpProjectId = 'zephyr-tibodata-dv';
+    const isProduction = process.env.NODE_ENV === 'production';
+    this.projectRoot = process.env.PROJECT_ROOT || (isProduction ? path.resolve('/tmp') : path.resolve(process.cwd(), '..'));
+    this.gcpProjectId = process.env.GCP_PROJECT_ID || 'zephyr-tibodata-dv';
 
     try {
       // Attempt to initialize Google Cloud SDK clients
