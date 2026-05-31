@@ -1,0 +1,25 @@
+{
+  "name": "zephyr-backend",
+  "version": "1.0.0",
+  "description": "Backend API orchestrator for Zephyr platform",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.11.4",
+    "@google-cloud/cloudbuild": "^4.3.0",
+    "@google-cloud/firestore": "^7.7.0",
+    "@google-cloud/monitoring": "^4.1.0",
+    "@google-cloud/run": "^1.2.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "morgan": "^1.10.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.2"
+  }
+}
