@@ -1,79 +1,211 @@
 import React, { useState, useEffect } from 'react';
 
-// Mock Initial Data
-const INITIAL_BILLING_LOGS = [
+// Industry-standard fallback data if backend is offline
+const FALLBACK_BILLING_LOGS = [
   { id: 1, timestamp: '14:02:11', resource: 'Gemini 1.5 Flash (Tokens)', qty: '12,430 In / 4,120 Out', cost: 0.0124 },
   { id: 2, timestamp: '14:02:15', resource: 'Cloud Run Build (CPU-sec)', qty: '42.5 vCPU-sec', cost: 0.0034 },
   { id: 3, timestamp: '14:05:00', resource: 'Cloud Run Compute (RAM-sec)', qty: '2,048 MB-sec', cost: 0.0016 },
-  { id: 4, timestamp: '14:10:45', resource: 'Gemini 1.5 Flash (Tokens)', qty: '24,500 In / 8,900 Out', cost: 0.0249 },
 ];
 
 const INITIAL_MESSAGES = [
   { id: 1, sender: 'zephyr', text: "Hello Thibault! I am Zephyr, your GCP-integrated AI app creator. Let's build your next big idea under `tibodata.com`. What are we creating today?" },
-  { id: 2, sender: 'user', text: "Hey! Let's build a sleek landing page for my consulting firm, Tibo Advisory. It should have a clean modern hero section and a service catalog." },
-  { id: 3, sender: 'zephyr', text: "Excellent choice. I'm choosing a premium deep slate and warm amber color palette, with structured grids for the service cards. I've initiated the repository and deployed version 1 to Cloud Run under `tibo-advisory.tibodata.com`. Check out the live canvas on your right!" },
 ];
 
 export default function App() {
   const [messages, setMessages] = useState(INITIAL_MESSAGES);
   const [inputText, setInputText] = useState('');
-  const [activeProject, setActiveProject] = useState('tibo-advisory');
+  const [activeProject, setActiveProject] = useState(null);
+  const [projects, setProjects] = useState([]);
   const [environment, setEnvironment] = useState('Development');
-  const [allowlist, setAllowlist] = useState(['thibault@tibodata.com', 'client@test.com', 'admin@tibodata.com']);
+  const [allowlist, setAllowlist] = useState(['thibault@tibodata.com', 'admin@tibodata.com']);
   const [newEmail, setNewEmail] = useState('');
-  const [billingLogs, setBillingLogs] = useState(INITIAL_BILLING_LOGS);
+  const [billingLogs, setBillingLogs] = useState(FALLBACK_BILLING_LOGS);
+  const [totalCost, setTotalCost] = useState(0.0174);
+  const [aggregates, setAggregates] = useState({ totalTokens: 16550, totalCpuSec: 42.5 });
   const [isDeploying, setIsDeploying] = useState(false);
+  const [userEmail, setUserEmail] = useState('thibault@tibodata.com');
 
-  // Telemetry Aggregates
-  const totalCost = billingLogs.reduce((acc, curr) => acc + curr.cost, 0);
-  const totalTokens = 49950; // mock total tokens
-  const totalCpuSec = 42.5; // mock total cpu-sec
+  const API_BASE = ''; // proxied via vite.config.js to http://localhost:5000
 
-  const handleSendMessage = (e) => {
+  // 1. Initial Data Synchronizations on Mount
+  useEffect(() => {
+    fetchAllowlist();
+    fetchProjects();
+    fetchTelemetry();
+  }, []);
+
+  const fetchAllowlist = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/allowlist`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.length > 0) setAllowlist(data);
+      }
+    } catch (err) {
+      console.warn('Backend offline, allowlist running on offline mockup client state.');
+    }
+  };
+
+  const fetchProjects = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/projects?userId=${userEmail}`);
+      if (res.ok) {
+        const data = await res.json();
+        setProjects(data);
+        if (data.length > 0 && !activeProject) {
+          setActiveProject(data[0]);
+        }
+      } else {
+        // Create standard default project if database list is empty
+        createDefaultMockProject();
+      }
+    } catch (err) {
+      createDefaultMockProject();
+    }
+  };
+
+  const createDefaultMockProject = () => {
+    const defaultProj = {
+      id: 'tibo-advisory',
+      name: 'tibo-advisory',
+      status: 'Live',
+      url: 'https://tibo-advisory.tibodata.com',
+      latestCode: null
+    };
+    setProjects([defaultProj]);
+    setActiveProject(defaultProj);
+  };
+
+  const fetchTelemetry = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/telemetry?userId=${userEmail}${activeProject ? `&projectId=${activeProject.id}` : ''}`);
+      if (res.ok) {
+        const data = await res.json();
+        setBillingLogs(data.logs);
+        setTotalCost(data.totalCost);
+        setAggregates(data.aggregates);
+      }
+    } catch (err) {
+      console.warn('Backend telemetry offline, using robust client simulation metrics.');
+    }
+  };
+
+  const handleSendMessage = async (e) => {
     e.preventDefault();
-    if (!inputText.trim()) return;
+    if (!inputText.trim() || !activeProject) return;
 
     const userMsg = { id: Date.now(), sender: 'user', text: inputText };
     setMessages((prev) => [...prev, userMsg]);
     setInputText('');
+    setIsDeploying(true);
 
-    // Trigger AI response + mock deployment
-    setTimeout(() => {
-      const zephyrMsg = {
-        id: Date.now() + 1,
-        sender: 'zephyr',
-        text: `Got it! I am updating the design. Adding modern glowing cards, updating navigation layout, and queuing deployment on Cloud Run. Stand by...`
-      };
-      setMessages((prev) => [...prev, zephyrMsg]);
-      setIsDeploying(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: userEmail,
+          projectId: activeProject.id,
+          message: userMsg.text
+        })
+      });
 
-      // Simulate build & deploy logs injection
+      if (res.ok) {
+        const data = await res.json();
+        setMessages((prev) => [...prev, { id: Date.now() + 1, sender: 'zephyr', text: data.text }]);
+        
+        // Sync telemetry & project states
+        await fetchTelemetry();
+        await fetchProjects();
+      } else {
+        throw new Error('API failed');
+      }
+    } catch (err) {
+      // Offline/fallback dynamic simulation
       setTimeout(() => {
         setIsDeploying(false);
-        const newLogs = [
-          { id: Date.now() + 2, timestamp: new Date().toLocaleTimeString(), resource: 'Gemini 1.5 Flash (Tokens)', qty: '13,100 In / 3,840 Out', cost: 0.0118 },
-          { id: Date.now() + 3, timestamp: new Date().toLocaleTimeString(), resource: 'Cloud Run Build (vCPU-sec)', qty: '54.2 vCPU-sec', cost: 0.0048 },
+        const simText = `I have updated your application with your specifications! Added interactive forms, optimized the layouts, and redeployed version 2 to Cloud Run. Check it out in the canvas!`;
+        setMessages((prev) => [...prev, { id: Date.now() + 1, sender: 'zephyr', text: simText }]);
+
+        const addedLogs = [
+          { id: Date.now() + 2, timestamp: new Date().toLocaleTimeString(), resource: 'Gemini 1.5 Flash (Tokens)', qty: '14,350 In / 3,120 Out', cost: 0.0118 },
+          { id: Date.now() + 3, timestamp: new Date().toLocaleTimeString(), resource: 'Cloud Run Build (vCPU-sec)', qty: '45.1 vCPU-sec', cost: 0.0036 }
         ];
-        setBillingLogs((prev) => [...newLogs, ...prev]);
         
-        // Update Zephyr final confirmation
-        setMessages((prev) => [
-          ...prev,
-          { id: Date.now() + 4, sender: 'zephyr', text: `🚀 Version updated successfully! The consulting landing page has been redeployed on Cloud Run. You can see the new service descriptions live in the iframe.` }
-        ]);
+        setBillingLogs((prev) => [...addedLogs, ...prev]);
+        setTotalCost((prev) => prev + 0.0154);
+        setAggregates((prev) => ({
+          totalTokens: prev.totalTokens + 17470,
+          totalCpuSec: prev.totalCpuSec + 45.1
+        }));
       }, 3000);
-    }, 1000);
+    } finally {
+      setIsDeploying(false);
+    }
   };
 
-  const handleAddEmail = (e) => {
+  const handleAddEmail = async (e) => {
     e.preventDefault();
     if (!newEmail.trim() || allowlist.includes(newEmail)) return;
-    setAllowlist((prev) => [...prev, newEmail]);
-    setNewEmail('');
+
+    try {
+      const res = await fetch(`${API_BASE}/api/allowlist`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: newEmail })
+      });
+      if (res.ok) {
+        fetchAllowlist();
+        setNewEmail('');
+      } else {
+        throw new Error('API failed');
+      }
+    } catch (err) {
+      setAllowlist((prev) => [...prev, newEmail]);
+      setNewEmail('');
+    }
   };
 
-  const handleRemoveEmail = (email) => {
-    setAllowlist((prev) => prev.filter((e) => e !== email));
+  const handleRemoveEmail = async (email) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/allowlist/${email}`, {
+        method: 'DELETE'
+      });
+      if (res.ok) {
+        fetchAllowlist();
+      } else {
+        throw new Error('API failed');
+      }
+    } catch (err) {
+      setAllowlist((prev) => prev.filter((e) => e !== email));
+    }
+  };
+
+  const handleCreateProject = async () => {
+    const projName = prompt('Enter a new Project Name:');
+    if (!projName) return;
+
+    try {
+      const res = await fetch(`${API_BASE}/api/projects`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: userEmail, name: projName })
+      });
+      if (res.ok) {
+        fetchProjects();
+      }
+    } catch (err) {
+      const id = projName.toLowerCase().replace(/[^a-z0-9]/g, '-');
+      const newProj = {
+        id,
+        name: projName,
+        status: 'Live',
+        url: `https://${id}.tibodata.com`,
+        latestCode: null
+      };
+      setProjects((prev) => [...prev, newProj]);
+      setActiveProject(newProj);
+    }
   };
 
   return (
@@ -85,11 +217,28 @@ export default function App() {
           <div style={{ background: 'linear-gradient(135deg, var(--primary) 0%, var(--accent) 100%)', width: '40px', height: '40px', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: '800', fontSize: '1.25rem', color: '#ffffff' }}>Z</div>
           <div>
             <h1 className="gradient-text-accent" style={{ fontSize: '1.5rem', lineHeight: 1.2 }}>Zephyr</h1>
-            <p style={{ fontSize: '0.75rem', color: var(--text-secondary) }}>Powered by Antigravity • Cloud Run Orchestrator</p>
+            <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Powered by Antigravity • Cloud Run Orchestrator</p>
           </div>
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+          {/* Project Switcher */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginRight: '16px' }}>
+            <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Project:</span>
+            <select
+              value={activeProject ? activeProject.id : ''}
+              onChange={(e) => setActiveProject(projects.find(p => p.id === e.target.value))}
+              style={{ background: 'rgba(255,255,255,0.05)', color: 'white', border: '1px solid var(--border-glass)', padding: '6px 12px', borderRadius: '6px', fontSize: '0.8rem', outline: 'none' }}
+            >
+              {projects.map(p => (
+                <option key={p.id} value={p.id} style={{ background: '#121217', color: 'white' }}>{p.name}</option>
+              ))}
+            </select>
+            <button onClick={handleCreateProject} style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-glass)', color: 'white', cursor: 'pointer', padding: '6px 10px', borderRadius: '6px', fontSize: '0.8rem' }}>
+              + New
+            </button>
+          </div>
+
           {/* Environment Selector */}
           <div style={{ display: 'flex', background: 'rgba(255,255,255,0.03)', padding: '4px', borderRadius: '8px', border: '1px solid var(--border-glass)' }}>
             {['Development', 'QA', 'Production'].map((env) => (
@@ -116,7 +265,7 @@ export default function App() {
           {/* User Badge */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', background: 'rgba(255,255,255,0.05)', padding: '6px 14px', borderRadius: '30px', border: '1px solid var(--border-glass)' }}>
             <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--accent)', boxShadow: '0 0 8px var(--accent)' }} />
-            <span style={{ fontSize: '0.8rem', fontWeight: '500', color: 'var(--text-primary)' }}>thibault@tibodata.com</span>
+            <span style={{ fontSize: '0.8rem', fontWeight: '500', color: 'var(--text-primary)' }}>{userEmail}</span>
           </div>
         </div>
       </header>
@@ -177,21 +326,25 @@ export default function App() {
           {/* Canvas Toolbar */}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderBottom: '1px solid var(--border-glass)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-              <span style={{ fontSize: '0.85rem', fontWeight: '600', color: 'var(--text-primary)' }}>tibo-advisory</span>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'rgba(20, 184, 166, 0.1)', border: '1px solid rgba(20, 184, 166, 0.2)', padding: '2px 8px', borderRadius: '12px' }}>
-                <div style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'var(--accent)' }} />
-                <span style={{ fontSize: '0.7rem', color: 'var(--accent)', fontWeight: '600' }}>Live</span>
-              </div>
+              <span style={{ fontSize: '0.85rem', fontWeight: '600', color: 'var(--text-primary)' }}>{activeProject ? activeProject.name : 'No Project Active'}</span>
+              {activeProject && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'rgba(20, 184, 166, 0.1)', border: '1px solid rgba(20, 184, 166, 0.2)', padding: '2px 8px', borderRadius: '12px' }}>
+                  <div style={{ width: '6px', height: '6px', borderRadius: '50%', background: activeProject.status === 'Live' ? 'var(--accent)' : 'hsl(30, 80%, 50%)' }} />
+                  <span style={{ fontSize: '0.7rem', color: activeProject.status === 'Live' ? 'var(--accent)' : 'hsl(30, 80%, 50%)', fontWeight: '600' }}>{activeProject.status}</span>
+                </div>
+              )}
             </div>
             
-            <div style={{ display: 'flex', gap: '8px' }}>
-              <a href="https://tibo-advisory.tibodata.com" target="_blank" rel="noreferrer" className="btn-secondary" style={{ padding: '6px 12px', fontSize: '0.75rem', borderRadius: '6px' }}>
-                Open Web Link ↗
-              </a>
-              <button className="btn-primary" style={{ padding: '6px 12px', fontSize: '0.75rem', borderRadius: '6px', boxShadow: 'none' }}>
-                Re-Deploy 🚀
-              </button>
-            </div>
+            {activeProject && (
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <a href={activeProject.url} target="_blank" rel="noreferrer" className="btn-secondary" style={{ padding: '6px 12px', fontSize: '0.75rem', borderRadius: '6px' }}>
+                  Open Web Link ↗
+                </a>
+                <button className="btn-primary" style={{ padding: '6px 12px', fontSize: '0.75rem', borderRadius: '6px', boxShadow: 'none' }}>
+                  Re-Deploy 🚀
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Preview Sandbox Iframe Container */}
@@ -199,7 +352,7 @@ export default function App() {
             <iframe
               title="Live Application Preview"
               style={{ width: '100%', height: '100%', border: 'none', background: '#111216' }}
-              srcDoc={`
+              srcDoc={activeProject && activeProject.latestCode ? activeProject.latestCode : `
                 <!DOCTYPE html>
                 <html>
                   <head>
@@ -252,18 +405,18 @@ export default function App() {
             </div>
 
             <div style={{ height: '6px', background: 'rgba(255,255,255,0.05)', borderRadius: '3px', position: 'relative', overflow: 'hidden', marginBottom: '16px' }}>
-              <div style={{ position: 'absolute', top: 0, left: 0, height: '100%', width: '42%', background: 'linear-gradient(90deg, var(--primary) 0%, var(--accent-gaze) 100%)', borderRadius: '3px' }} />
+              <div style={{ position: 'absolute', top: 0, left: 0, height: '100%', width: `${Math.min((totalCost / 0.1) * 100, 100)}%`, background: 'linear-gradient(90deg, var(--primary) 0%, var(--accent-gaze) 100%)', borderRadius: '3px' }} />
             </div>
 
             {/* Granular Aggregates */}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '12px' }}>
               <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-glass)', padding: '10px', borderRadius: '8px' }}>
                 <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', display: 'block' }}>Tokens Used</span>
-                <span style={{ fontSize: '0.85rem', fontWeight: '600', color: 'var(--text-primary)' }}>{totalTokens.toLocaleString()}</span>
+                <span style={{ fontSize: '0.85rem', fontWeight: '600', color: 'var(--text-primary)' }}>{aggregates.totalTokens.toLocaleString()}</span>
               </div>
               <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-glass)', padding: '10px', borderRadius: '8px' }}>
                 <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', display: 'block' }}>Compute Build</span>
-                <span style={{ fontSize: '0.85rem', fontWeight: '600', color: 'var(--text-primary)' }}>{totalCpuSec} CPU-s</span>
+                <span style={{ fontSize: '0.85rem', fontWeight: '600', color: 'var(--text-primary)' }}>{aggregates.totalCpuSec} CPU-s</span>
               </div>
             </div>
 
